@@ -33,6 +33,7 @@ import org.springframework.security.config.annotation.web.HttpSecurityBuilder;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.annotation.web.configurers.ExceptionHandlingConfigurer;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.NimbusJwsEncoder;
 import org.springframework.security.oauth2.server.authorization.InMemoryOAuth2AuthorizationService;
@@ -45,6 +46,9 @@ import org.springframework.security.oauth2.server.authorization.authentication.O
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2RefreshTokenAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenIntrospectionAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenRevocationAuthenticationProvider;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientJwtAuthenticationProvider;
+import org.springframework.security.oauth2.server.authorization.client.DefaultJwtToRegisteredClientResolver;
+import org.springframework.security.oauth2.server.authorization.client.JwtToRegisteredClientResolver;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.config.ProviderSettings;
 import org.springframework.security.oauth2.server.authorization.oidc.authentication.OidcClientRegistrationAuthenticationProvider;
@@ -163,11 +167,22 @@ public final class OAuth2AuthorizationServerConfigurer<B extends HttpSecurityBui
 				new OAuth2ClientAuthenticationProvider(
 						getRegisteredClientRepository(builder),
 						getAuthorizationService(builder));
+
 		PasswordEncoder passwordEncoder = getOptionalBean(builder, PasswordEncoder.class);
 		if (passwordEncoder != null) {
 			clientAuthenticationProvider.setPasswordEncoder(passwordEncoder);
 		}
 		builder.authenticationProvider(postProcess(clientAuthenticationProvider));
+
+		JwtDecoder jwtDecoder = getJwtDecoder(builder);
+		if (jwtDecoder != null) {
+			OAuth2ClientJwtAuthenticationProvider clientJwtAuthenticationProvider =
+					new OAuth2ClientJwtAuthenticationProvider(
+							getJwtToRegisteredClientResolver(builder),
+							getAuthorizationService(builder),
+							jwtDecoder);
+			builder.authenticationProvider(postProcess(clientJwtAuthenticationProvider));
+		}
 
 		JwtEncoder jwtEncoder = getJwtEncoder(builder);
 		OAuth2TokenCustomizer<JwtEncodingContext> jwtCustomizer = getJwtCustomizer(builder);
@@ -335,6 +350,19 @@ public final class OAuth2AuthorizationServerConfigurer<B extends HttpSecurityBui
 		return registeredClientRepository;
 	}
 
+	private static <B extends HttpSecurityBuilder<B>> JwtToRegisteredClientResolver getJwtToRegisteredClientResolver(B builder) {
+		JwtToRegisteredClientResolver resolver = builder.getSharedObject(JwtToRegisteredClientResolver.class);
+		if (resolver == null) {
+			try {
+				resolver = builder.getSharedObject(ApplicationContext.class).getBean(JwtToRegisteredClientResolver.class);
+			} catch (NoSuchBeanDefinitionException e) {
+				resolver = new DefaultJwtToRegisteredClientResolver(getRegisteredClientRepository(builder));
+			}
+			builder.setSharedObject(JwtToRegisteredClientResolver.class, resolver);
+		}
+		return resolver;
+	}
+
 	private static <B extends HttpSecurityBuilder<B>> OAuth2AuthorizationService getAuthorizationService(B builder) {
 		OAuth2AuthorizationService authorizationService = builder.getSharedObject(OAuth2AuthorizationService.class);
 		if (authorizationService == null) {
@@ -345,6 +373,14 @@ public final class OAuth2AuthorizationServerConfigurer<B extends HttpSecurityBui
 			builder.setSharedObject(OAuth2AuthorizationService.class, authorizationService);
 		}
 		return authorizationService;
+	}
+
+	private static <B extends HttpSecurityBuilder<B>>JwtDecoder getJwtDecoder(B builder) {
+		JwtDecoder jwtDecoder = builder.getSharedObject(JwtDecoder.class);
+		if (jwtDecoder == null) {
+			jwtDecoder = getOptionalBean(builder, JwtDecoder.class);
+		}
+		return jwtDecoder;
 	}
 
 	private static <B extends HttpSecurityBuilder<B>> JwtEncoder getJwtEncoder(B builder) {
