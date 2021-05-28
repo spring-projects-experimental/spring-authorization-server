@@ -50,6 +50,9 @@ import org.springframework.security.oauth2.server.authorization.config.ProviderS
 import org.springframework.security.oauth2.server.authorization.oidc.authentication.OidcClientRegistrationAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.oidc.web.OidcClientRegistrationEndpointFilter;
 import org.springframework.security.oauth2.server.authorization.oidc.web.OidcProviderConfigurationEndpointFilter;
+import org.springframework.security.oauth2.server.authorization.oidc.DefaultUserInfoClaimsMapper;
+import org.springframework.security.oauth2.server.authorization.oidc.UserInfoClaimsMapper;
+import org.springframework.security.oauth2.server.authorization.oidc.OidcUserInfoEndpointFilter;
 import org.springframework.security.oauth2.server.authorization.web.NimbusJwkSetEndpointFilter;
 import org.springframework.security.oauth2.server.authorization.web.OAuth2AuthorizationEndpointFilter;
 import org.springframework.security.oauth2.server.authorization.web.OAuth2AuthorizationServerMetadataEndpointFilter;
@@ -73,6 +76,7 @@ import org.springframework.util.StringUtils;
  * @author Daniel Garnier-Moiroux
  * @author Gerardo Roza
  * @author Ovidiu Popa
+ * @author Ido Salomon
  * @since 0.0.1
  * @see AbstractHttpConfigurer
  * @see RegisteredClientRepository
@@ -86,6 +90,7 @@ import org.springframework.util.StringUtils;
  * @see OAuth2AuthorizationServerMetadataEndpointFilter
  * @see OAuth2ClientAuthenticationFilter
  * @see OidcClientRegistrationEndpointFilter
+ * @see OidcUserInfoEndpointFilter
  */
 public final class OAuth2AuthorizationServerConfigurer<B extends HttpSecurityBuilder<B>>
 		extends AbstractHttpConfigurer<OAuth2AuthorizationServerConfigurer<B>, B> {
@@ -98,12 +103,15 @@ public final class OAuth2AuthorizationServerConfigurer<B extends HttpSecurityBui
 	private RequestMatcher oidcProviderConfigurationEndpointMatcher;
 	private RequestMatcher authorizationServerMetadataEndpointMatcher;
 	private RequestMatcher oidcClientRegistrationEndpointMatcher;
+	private RequestMatcher oidcUserInfoEndpointMatcher;
 	private final RequestMatcher endpointsMatcher = (request) ->
 			this.authorizationEndpointMatcher.matches(request) ||
 			this.tokenEndpointMatcher.matches(request) ||
 			this.tokenIntrospectionEndpointMatcher.matches(request) ||
 			this.tokenRevocationEndpointMatcher.matches(request) ||
-			this.jwkSetEndpointMatcher.matches(request) ||
+					this.oidcUserInfoEndpointMatcher.matches(request) ||
+
+					this.jwkSetEndpointMatcher.matches(request) ||
 			this.oidcProviderConfigurationEndpointMatcher.matches(request) ||
 			this.authorizationServerMetadataEndpointMatcher.matches(request) ||
 			this.oidcClientRegistrationEndpointMatcher.matches(request);
@@ -141,6 +149,18 @@ public final class OAuth2AuthorizationServerConfigurer<B extends HttpSecurityBui
 	public OAuth2AuthorizationServerConfigurer<B> providerSettings(ProviderSettings providerSettings) {
 		Assert.notNull(providerSettings, "providerSettings cannot be null");
 		this.getBuilder().setSharedObject(ProviderSettings.class, providerSettings);
+		return this;
+	}
+
+	/**
+	 * Sets the user info claims mapper.
+	 *
+	 * @param userInfoClaimsMapper the user info claims mapper
+	 * @return the {@link OAuth2AuthorizationServerConfigurer} for further configuration
+	 */
+	public OAuth2AuthorizationServerConfigurer<B> userInfoClaimsMapper(UserInfoClaimsMapper userInfoClaimsMapper) {
+		Assert.notNull(userInfoClaimsMapper, "userInfoClaimsMapper cannot be null");
+		this.getBuilder().setSharedObject(UserInfoClaimsMapper.class, userInfoClaimsMapper);
 		return this;
 	}
 
@@ -314,6 +334,13 @@ public final class OAuth2AuthorizationServerConfigurer<B extends HttpSecurityBui
 				OAuth2AuthorizationServerMetadataEndpointFilter.DEFAULT_OAUTH2_AUTHORIZATION_SERVER_METADATA_ENDPOINT_URI, HttpMethod.GET.name());
 		this.oidcClientRegistrationEndpointMatcher = new AntPathRequestMatcher(
 				providerSettings.oidcClientRegistrationEndpoint(), HttpMethod.POST.name());
+		this.oidcUserInfoEndpointMatcher = new OrRequestMatcher(
+				new AntPathRequestMatcher(
+						OidcUserInfoEndpointFilter.DEFAULT_OIDC_USER_INFO_ENDPOINT_URI,
+						HttpMethod.GET.name()),
+				new AntPathRequestMatcher(
+						OidcUserInfoEndpointFilter.DEFAULT_OIDC_USER_INFO_ENDPOINT_URI,
+						HttpMethod.POST.name()));
 	}
 
 	private static void validateProviderSettings(ProviderSettings providerSettings) {
@@ -382,6 +409,18 @@ public final class OAuth2AuthorizationServerConfigurer<B extends HttpSecurityBui
 			}
 		}
 		return jwtCustomizer;
+	}
+
+	private static <B extends HttpSecurityBuilder<B>> UserInfoClaimsMapper getUserInfoClaimsMapper(B builder) {
+		UserInfoClaimsMapper userInfoClaimsMapper = builder.getSharedObject(UserInfoClaimsMapper.class);
+		if (userInfoClaimsMapper == null) {
+			userInfoClaimsMapper = getOptionalBean(builder, UserInfoClaimsMapper.class);
+			if (userInfoClaimsMapper == null) {
+				userInfoClaimsMapper = new DefaultUserInfoClaimsMapper();
+			}
+			builder.setSharedObject(UserInfoClaimsMapper.class, userInfoClaimsMapper);
+		}
+		return userInfoClaimsMapper;
 	}
 
 	private static <B extends HttpSecurityBuilder<B>> ProviderSettings getProviderSettings(B builder) {
