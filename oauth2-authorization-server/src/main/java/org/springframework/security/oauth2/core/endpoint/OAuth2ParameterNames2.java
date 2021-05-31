@@ -29,4 +29,18 @@ public interface OAuth2ParameterNames2 extends OAuth2ParameterNames {
 
 	String TOKEN_TYPE_HINT = "token_type_hint";
 
+	/**
+	 * {@code assertion} - used in Access Token Request for assertion-based token grants.
+	 */
+	String ASSERTION = "assertion";
+
+	/**
+	 * {@code client_assertion} - used in Access Token Request for client authentication using assertions.
+	 */
+	String CLIENT_ASSERTION = "client_assertion";
+
+	/**
+	 * {@code client_assertion_type} - used in Access Token Request for client authentication using assertions.
+	 */
+	String CLIENT_ASSERTION_TYPE = "client_assertion_type";
 }
