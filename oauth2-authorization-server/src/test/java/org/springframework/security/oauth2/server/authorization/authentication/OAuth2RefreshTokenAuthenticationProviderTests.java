@@ -16,6 +16,7 @@
 package org.springframework.security.oauth2.server.authorization.authentication;
 
 import java.security.Principal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Collections;
@@ -436,6 +437,73 @@ public class OAuth2RefreshTokenAuthenticationProviderTests {
 				.extracting(ex -> ((OAuth2AuthenticationException) ex).getError())
 				.extracting("errorCode")
 				.isEqualTo(OAuth2ErrorCodes.INVALID_GRANT);
+	}
+
+	@Test
+	public void authenticateWhenClientIsPublicThenIssueReducedRefreshToken() {
+		Duration refreshTokenTimeToLive = Duration.ofHours(24);
+		Duration currentTokenDisuseDuration = Duration.ofHours(1);
+		RegisteredClient registeredClient = TestRegisteredClients.registeredPublicClient()
+				.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+				.tokenSettings(tokenSettings -> {
+					tokenSettings.reuseRefreshTokens(false);
+					tokenSettings.refreshTokenTimeToLive(refreshTokenTimeToLive);
+				})
+				.build();
+		OAuth2RefreshToken refreshToken = new OAuth2RefreshToken2("refresh-token",
+				Instant.now().minus(currentTokenDisuseDuration), Instant.now().plus(refreshTokenTimeToLive));
+		OAuth2Authorization authorization = TestOAuth2Authorizations.authorization(registeredClient)
+				.token(refreshToken)
+				.build();
+		when(this.authorizationService.findByToken(
+				eq(authorization.getRefreshToken().getToken().getTokenValue()),
+				eq(OAuth2TokenType.REFRESH_TOKEN)))
+				.thenReturn(authorization);
+
+		OAuth2ClientAuthenticationToken clientPrincipal = new OAuth2ClientAuthenticationToken(registeredClient);
+		OAuth2RefreshTokenAuthenticationToken authentication = new OAuth2RefreshTokenAuthenticationToken(
+				authorization.getRefreshToken().getToken().getTokenValue(), clientPrincipal, null, null);
+
+		OAuth2AccessTokenAuthenticationToken authenticationToken = (OAuth2AccessTokenAuthenticationToken)
+				this.authenticationProvider.authenticate(authentication);
+
+		assertThat(authenticationToken.getRefreshToken()).isNotNull();
+		assertThat(authenticationToken.getRefreshToken().getExpiresAt())
+				.isNotNull()
+				.isBeforeOrEqualTo(Instant.now().plus(refreshTokenTimeToLive.minus(currentTokenDisuseDuration)));
+	}
+
+	@Test
+	public void authenticateWhenClientIsPublicAndCurrentTokenHasNotIssuedAtThenGenerateRefreshToken() {
+		Duration refreshTokenTimeToLive = Duration.ofHours(24);
+		RegisteredClient registeredClient = TestRegisteredClients.registeredPublicClient()
+				.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+				.tokenSettings(tokenSettings -> {
+					tokenSettings.reuseRefreshTokens(false);
+					tokenSettings.refreshTokenTimeToLive(refreshTokenTimeToLive);
+				})
+				.build();
+		OAuth2RefreshToken refreshToken = new OAuth2RefreshToken2("refresh-token",
+				null, Instant.now().plus(refreshTokenTimeToLive));
+		OAuth2Authorization authorization = TestOAuth2Authorizations.authorization(registeredClient)
+				.token(refreshToken)
+				.build();
+		when(this.authorizationService.findByToken(
+				eq(authorization.getRefreshToken().getToken().getTokenValue()),
+				eq(OAuth2TokenType.REFRESH_TOKEN)))
+				.thenReturn(authorization);
+
+		OAuth2ClientAuthenticationToken clientPrincipal = new OAuth2ClientAuthenticationToken(registeredClient);
+		OAuth2RefreshTokenAuthenticationToken authentication = new OAuth2RefreshTokenAuthenticationToken(
+				authorization.getRefreshToken().getToken().getTokenValue(), clientPrincipal, null, null);
+
+		OAuth2AccessTokenAuthenticationToken authenticationToken = (OAuth2AccessTokenAuthenticationToken)
+				this.authenticationProvider.authenticate(authentication);
+
+		assertThat(authenticationToken.getRefreshToken()).isNotNull();
+		assertThat(authenticationToken.getRefreshToken().getExpiresAt())
+				.isNotNull()
+				.isBeforeOrEqualTo(Instant.now().plus(refreshTokenTimeToLive));
 	}
 
 	private static Jwt createJwt(Set<String> scope) {

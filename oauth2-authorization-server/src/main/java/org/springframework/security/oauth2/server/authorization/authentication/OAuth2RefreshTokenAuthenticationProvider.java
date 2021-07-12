@@ -53,6 +53,7 @@ import org.springframework.security.oauth2.server.authorization.client.Registere
 import org.springframework.security.oauth2.server.authorization.config.ProviderSettings;
 import org.springframework.security.oauth2.server.authorization.config.TokenSettings;
 import org.springframework.util.Assert;
+import org.springframework.util.StringUtils;
 
 import static org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthenticationProviderUtils.getAuthenticatedClientElseThrowInvalidClient;
 
@@ -71,6 +72,7 @@ import static org.springframework.security.oauth2.server.authorization.authentic
  * @see JwtEncodingContext
  * @see <a target="_blank" href="https://tools.ietf.org/html/rfc6749#section-1.5">Section 1.5 Refresh Token Grant</a>
  * @see <a target="_blank" href="https://tools.ietf.org/html/rfc6749#section-6">Section 6 Refreshing an Access Token</a>
+ * @see <a target="_blank" href="https://datatracker.ietf.org/doc/html/draft-ietf-oauth-browser-based-apps-07#section-8">Section 8 Refresh Tokens</a>
  */
 public class OAuth2RefreshTokenAuthenticationProvider implements AuthenticationProvider {
 	private static final OAuth2TokenType ID_TOKEN_TOKEN_TYPE = new OAuth2TokenType(OidcParameterNames.ID_TOKEN);
@@ -179,7 +181,20 @@ public class OAuth2RefreshTokenAuthenticationProvider implements AuthenticationP
 
 		OAuth2RefreshToken currentRefreshToken = refreshToken.getToken();
 		if (!tokenSettings.reuseRefreshTokens()) {
-			currentRefreshToken = generateRefreshToken(tokenSettings.refreshTokenTimeToLive());
+			Duration refreshTokenTimeToLive = tokenSettings.refreshTokenTimeToLive();
+			boolean isPublicClient = !StringUtils.hasText(registeredClient.getClientSecret());
+			if (isPublicClient) {
+				// As per https://datatracker.ietf.org/doc/html/draft-ietf-oauth-browser-based-apps-07#section-8
+				// - SHOULD rotate refresh tokens on each use, in order to be able to
+				//   detect a stolen refresh token if one is replayed
+				// - upon issuing a rotated refresh token, MUST NOT extend the lifetime
+				//   of the new refresh token beyond the lifetime of the initial
+				//   refresh token if the refresh token has a preestablished expiration time
+				currentRefreshToken = generateReducedRefreshToken(refreshTokenTimeToLive,
+						currentRefreshToken.getIssuedAt());
+			} else {
+				currentRefreshToken = generateRefreshToken(refreshTokenTimeToLive);
+			}
 		}
 
 		Jwt jwtIdToken = null;
@@ -251,5 +266,18 @@ public class OAuth2RefreshTokenAuthenticationProvider implements AuthenticationP
 		Instant issuedAt = Instant.now();
 		Instant expiresAt = issuedAt.plus(tokenTimeToLive);
 		return new OAuth2RefreshToken2(TOKEN_GENERATOR.generateKey(), issuedAt, expiresAt);
+	}
+
+	private static OAuth2RefreshToken generateReducedRefreshToken(Duration tokenTimeToLive,
+			Instant currentRefreshTokenIssuedAt) {
+		Duration reducedTimeToLife;
+		if (currentRefreshTokenIssuedAt != null) {
+			Duration currentTokenDisuseDuration = Duration.between(currentRefreshTokenIssuedAt, Instant.now());
+			reducedTimeToLife = tokenTimeToLive.minus(currentTokenDisuseDuration);
+		} else {
+			reducedTimeToLife = tokenTimeToLive;
+		}
+
+		return generateRefreshToken(reducedTimeToLife);
 	}
 }
